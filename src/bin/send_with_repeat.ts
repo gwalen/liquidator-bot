@@ -1,4 +1,3 @@
-// import { notify } from './notifications';
 import {
   Connection,
   SimulatedTransactionResponse,
@@ -8,55 +7,52 @@ import {
   RpcResponseAndContext,
 } from '@solana/web3.js';
 
-const DEFAULT_TIMEOUT = 30000;
+// timeout after which we stop resending transactions
+const DEFAULT_TIMEOUT_SEC = 1000;
 
 
-export async function sendSignedTransaction({
-    signedTransaction,
-    connection,
-    // sendingMessage = 'Sending transaction...',
-    // sentMessage = 'Transaction sent',
-    // successMessage = 'Transaction confirmed',
-    timeout = DEFAULT_TIMEOUT,
-  }: {
-    signedTransaction: Transaction;
-    connection: Connection;
-    timeout?: number;
-  }): Promise<string> {
+export async function sendSignedTransactionWithRepeat(
+    signedTransaction: Transaction,
+    connection: Connection,
+    timeout_sec: number = DEFAULT_TIMEOUT_SEC,
+    repeat_interval_ms: number = 300
+  ): Promise<string> {
     const rawTransaction = signedTransaction.serialize();
     const startTime = getUnixTs();
-    // notify({ message: sendingMessage });
+
     const txid: TransactionSignature = await connection.sendRawTransaction(
       rawTransaction,
       {
         skipPreflight: true,
       },
     );
-    // notify({ message: sentMessage, type: 'success', txid });
   
     console.log('Started awaiting confirmation for', txid);
   
     let done = false;
     (async () => {
-      while (!done && getUnixTs() - startTime < timeout) {
+      while (!done && getUnixTs() - startTime < timeout_sec) {
         connection.sendRawTransaction(rawTransaction, {
           skipPreflight: true,
+          maxRetries: 0
         });
-        await sleep(300);
+        await sleep(repeat_interval_ms);
       }
     })();
     try {
-      await awaitTransactionSignatureConfirmation(txid, timeout, connection);
+      await awaitTransactionSignatureConfirmation(txid, timeout_sec, connection);
     } catch (err) {
       if (err.timeout) {
         throw new Error('Timed out awaiting confirmation on transaction');
       }
+
       let simulateResult: SimulatedTransactionResponse | null = null;
       try {
         simulateResult = (
           await simulateTransaction(connection, signedTransaction, 'confirmed')
         ).value;
       } catch (e) {}
+
       if (simulateResult && simulateResult.err) {
         if (simulateResult.logs) {
           for (let i = simulateResult.logs.length - 1; i >= 0; --i) {
@@ -74,7 +70,6 @@ export async function sendSignedTransaction({
     } finally {
       done = true;
     }
-    // notify({ message: successMessage, type: 'success', txid });
   
     console.log('Latency', txid, getUnixTs() - startTime);
     return txid;
@@ -124,19 +119,18 @@ export async function sendSignedTransaction({
               ]);
               const result = signatureStatuses && signatureStatuses.value[0];
               if (!done) {
-  
                 if (!result) {
-                  // console.log('REST null result for', txid, result);
+                  console.log('tx null result for', txid, result);
                 } else if (result.err) {
-                  console.log('REST error for', txid, result);
+                  console.log('tx error for', txid, result);
                   done = true;
                   reject(result.err);
                 }
                 // @ts-ignore
                 else if (!(result.confirmations || result.confirmationStatus === "confirmed" || result.confirmationStatus === "finalized")) {
-                  console.log('REST not confirmed', txid, result);
+                  console.log('tx not confirmed', txid, result);
                 } else {
-                  console.log('REST confirmed', txid, result);
+                  console.log('tx confirmed', txid, result);
                   done = true;
                   resolve(result);
                 }
@@ -144,7 +138,7 @@ export async function sendSignedTransaction({
             }
             catch (e) {
               if (!done) {
-                console.log('REST connection error: txid', txid, e);
+                console.log('connection error: txid', txid, e);
               }
             }
           })();

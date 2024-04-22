@@ -6,7 +6,6 @@ const RPC_URL = process.env.RPC_URL || "https://api.mainnet-beta.solana.com";
 const LIQUIDATOR_MARGIN_ACCOUNT = process.env.LIQUIDATOR_MARGIN_ACCOUNT || "YourMarginAccountAddressHere";
 const PRIVATE_KEY = process.env.PRIVATE_KEY || "YourPrivateKeyHere";
 const INTERVAL = process.env.INTERVAL || "1000"; // Default interval set to 1000 milliseconds
-const BURST = parseInt(process.env.BURST || "1");
 
 const COMMITMENT: Commitment = 'confirmed';
 
@@ -17,7 +16,6 @@ async function startLiquidationProcess() {
         LIQUIDATOR_MARGIN_ACCOUNT,
         PRIVATE_KEY,
         INTERVAL,
-        BURST,
         COMMITMENT
     );
 
