@@ -27,25 +27,43 @@ import {
 } from "@solana/web3.js";
 import bs58 from "bs58";
 import * as dotenv from "dotenv";
+import { sendSignedTransaction } from "./send_with_repeat";
 dotenv.config();
 
 export class Liquidator {
     private sdk: ParclV3Sdk;
     private connection: Connection;
-    private interval: number;
+    private interval: number; // interval in milliseconds
+    private burst: number;
     private exchangeAddress: Address;
     private liquidatorSigner: Keypair;
     private liquidatorMarginAccount: Address;
 
-    constructor(rpcUrl: string, liquidatorMarginAccount: string, privateKey: string, interval: string = "300", commitment: Commitment | undefined = undefined) {
-        const [exchangeAddress] = getExchangePda(0);
+    constructor(
+        rpcUrl: string,
+        liquidatorMarginAccount: string,
+        privateKey: string,
+        interval: string = "1000",
+        burst: number = 1,
+        commitment: Commitment | undefined = undefined
+    ) {
+        const [exchangeAddress] = getExchangePda(0); // there is just one: usdc
         this.exchangeAddress = exchangeAddress;
         this.liquidatorMarginAccount = translateAddress(liquidatorMarginAccount);
         this.liquidatorSigner = Keypair.fromSecretKey(bs58.decode(privateKey));
         this.interval = parseInt(interval);
-        this.sdk = new ParclV3Sdk({ rpcUrl, commitment });
+        this.burst = burst;
+        this.sdk = new ParclV3Sdk(
+            { 
+                rpcUrl,
+                commitment,
+                confirmOptions: {
+                    skipPreflight: true // skip preflight check to be faster
+                }
+            });
         this.connection = new Connection(rpcUrl, commitment);
-    }
+        // console.log("connection: ", this.connection);
+        }
 
     public async runLiquidate(): Promise<void> {
         console.log("Starting liquidator");
@@ -53,18 +71,19 @@ export class Liquidator {
         try {
             await this.run();
         } catch (error) {
-            console.error("Failed to run liquidator due to error:", error);
-            // Optional: implement retry logic or other error handling here
+            console.error("Liquidator run() loop error: ", error);
         }
     }
 
     private async run(): Promise<void> {
         let firstRun = true;
         while (true) {
-            if (!firstRun) {
-                await this.sleep(this.interval * 1000);
+            if (firstRun) {
+                firstRun = false;
+            } else { 
+                await this.sleep(this.interval);
             }
-            firstRun = false;
+            
             try {
                 await this.processLiquidationCycle();
             } catch (error) {
@@ -78,14 +97,33 @@ export class Liquidator {
         const exchange = await this.fetchExchange();
         const allMarketAddresses: PublicKey[] = exchange.marketIds.filter(id => id !== 0)
             .map(marketId => getMarketPda(this.exchangeAddress, marketId)[0]);
+        console.log("Fetch markets");    
+        // TODO: move fetchin markets to the place where allMargin acounts are fetched
         const allMarkets = await this.sdk.accountFetcher.getMarkets(allMarketAddresses);
+        console.log("All markets count: ", allMarkets.length);    
         const [markets, priceFeeds] = await this.getMarketMapAndPriceFeedMap(allMarkets);
 
+        console.log("Fetch all margin accounts");
         const allMarginAccounts = await this.fetchAllMarginAccounts();
+        console.log("All margin accounts count: ", allMarginAccounts.length);
+        const exchangeWrapper = new ExchangeWrapper(exchange);
 
+        let allLiquidationAttempts: Promise<void>[] = []; // Array to hold all promises
+
+        // Process each margin account
+        console.log("Process margin accounts");
         for (const marginAccount of allMarginAccounts) {
-            await this.attemptLiquidation(new ExchangeWrapper(exchange), marginAccount, markets, priceFeeds);
+            // Create an array of promises to attempt liquidation 'burst' times concurrently
+            const liquidationBurst = Array.from({ length: this.burst }, () =>
+                this.attemptLiquidation(exchangeWrapper, marginAccount, markets, priceFeeds)
+            );
+            
+            // Add the burstPromises to the overall allPromises array
+            allLiquidationAttempts = allLiquidationAttempts.concat(liquidationBurst);
         }
+    
+        // Wait for all promises (from all accounts and all bursts) to complete
+        await Promise.all(allLiquidationAttempts);
     }
 
     private async attemptLiquidation(
@@ -95,13 +133,12 @@ export class Liquidator {
     ): Promise<void> {
         if (marginAccount.inLiquidation()) {
             console.log(`Liquidating account already in liquidation (${marginAccount.address})`);
-            await this.liquidate(marginAccount, markets);
-        }
-
-        if (marginAccount.getAccountMargins(exchangeWrapper, markets, priceFeeds, Math.floor(Date.now() / 1000)).canLiquidate()) {
+            // TODO: just for test
+            // await this.liquidate(marginAccount, markets);
+        } else if (marginAccount.getAccountMargins(exchangeWrapper, markets, priceFeeds, Math.floor(Date.now() / 1000)).canLiquidate()) {
             console.log(`Starting liquidation for ${marginAccount.address}`);
-            const signature = await this.liquidate(marginAccount, markets);
-            console.log("Signature: ", signature);
+            // const signature = await this.liquidate(marginAccount, markets);
+            // console.log("Signature: ", signature);
         }
     }
 
@@ -128,10 +165,16 @@ export class Liquidator {
                 )
                 .feePayer(this.liquidatorSigner.publicKey)
                 .buildSigned([this.liquidatorSigner], recentBlockhash);
-            return await sendAndConfirmTransaction(this.connection, tx, [this.liquidatorSigner]);
+
+            return await sendSignedTransaction({
+                signedTransaction: tx,
+                connection: this.connection,
+            });    
+
+            // return await sendAndConfirmTransaction(this.connection, tx, [this.liquidatorSigner]);
         } catch (error) {
-            console.error("Failed to execute liquidation:", error);
-            throw new Error(`Liquidation transaction failed: ${error}`);
+            // we throw here but all errors are catched in runLiquidate()
+            throw new Error(`Error while during liquidation for margin account: ${marginAccountWrapper.address}, error,: ${error}`);
         }
     }
 
