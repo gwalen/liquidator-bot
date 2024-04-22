@@ -1,26 +1,17 @@
-<div align="center">
-<img height="180" src="https://app.parcl.co/favicon.png"/>
-<h1>v3-keepers-ts</h1>
-</div>
+## Liquidator Bot: Solution 1
 
-Example parcl-v3 keeper bots written in TypeScript.
+Changes made:
+- Extracted all logic of the liquidator into the TypeScript (TS) class for improved readability and usability.
+- Added a liquidator_manager file to facilitate easy setup of the liquidator.
+- Added a burst parameter to allow sending multiple liquidation transactions at once (improves the chance that at least one will land).
+- Skipped preflight checks when sending transactions for faster processing.
+- Added error catching and logging to prevent the bot from crashing due to errors.
 
-## Alpha Software
+The key part is the burst parameter, which should allow safely landing at least one transaction on the chain.
 
-These example keepers are in alpha. Keepers may contain bugs.
+## Additional comments:
 
-## Development
+Fetching all margin accounts (~215k accounts) takes a significant amount of time and only works on RPC platforms like Helius/QuickNode, 
+not on the standard Solana one. This step seems unavoidable. 
 
-Pull requests welcome. Please reach out in the discord dev channel with any questions.
-
-## Keepers
-
-| Keeper Name | Info                                                                                                                                                                                                                                                                             |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Liquidator  | Watches margin accounts for liquidatable accounts and accounts currently in liquidation. If an account is found, then the service attempts to liquidate the account. Liquidator's margin account earns the liquidation fee rate applied to the total notional liquidated amount. |
-| Settler     | Watches settlement requests and processes the mature requests. Each settlement request has a optional tip that goes to the settler keeper.                                                                                                                                       |
-
-
-
-#### My notes 
-extend sdk to use transaction version V0
+I believe that improvements in ensuring transactions land successfully should focus on the method of transmission, either through the burst approach or manual retries.

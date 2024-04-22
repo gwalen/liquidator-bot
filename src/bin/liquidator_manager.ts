@@ -1,4 +1,4 @@
-import { Liquidator } from './liquidator'; // Assuming 'Liquidator' class is exported from another file
+import { Liquidator } from './liquidator';
 import { Commitment } from '@solana/web3.js';
 
 // Configuration parameters can be brought from environment variables or hardcoded for testing

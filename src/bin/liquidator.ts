@@ -7,9 +7,6 @@ import {
     getMarketPda,
     MarginAccountWrapper,
     MarketWrapper,
-    // ExchangeWrapper,
-    // LiquidateAccounts,
-    // LiquidateParams,
     MarketMap,
     PriceFeedMap,
     Address,
@@ -22,12 +19,11 @@ import {
     Connection,
     Keypair,
     PublicKey,
-    // Signer,
     sendAndConfirmTransaction,
 } from "@solana/web3.js";
 import bs58 from "bs58";
 import * as dotenv from "dotenv";
-import { sendSignedTransaction } from "./send_with_repeat";
+
 dotenv.config();
 
 export class Liquidator {
@@ -98,7 +94,6 @@ export class Liquidator {
         const allMarketAddresses: PublicKey[] = exchange.marketIds.filter(id => id !== 0)
             .map(marketId => getMarketPda(this.exchangeAddress, marketId)[0]);
         console.log("Fetch markets");    
-        // TODO: move fetchin markets to the place where allMargin acounts are fetched
         const allMarkets = await this.sdk.accountFetcher.getMarkets(allMarketAddresses);
         console.log("All markets count: ", allMarkets.length);    
         const [markets, priceFeeds] = await this.getMarketMapAndPriceFeedMap(allMarkets);
@@ -133,12 +128,11 @@ export class Liquidator {
     ): Promise<void> {
         if (marginAccount.inLiquidation()) {
             console.log(`Liquidating account already in liquidation (${marginAccount.address})`);
-            // TODO: just for test
-            // await this.liquidate(marginAccount, markets);
+            await this.liquidate(marginAccount, markets);
         } else if (marginAccount.getAccountMargins(exchangeWrapper, markets, priceFeeds, Math.floor(Date.now() / 1000)).canLiquidate()) {
             console.log(`Starting liquidation for ${marginAccount.address}`);
-            // const signature = await this.liquidate(marginAccount, markets);
-            // console.log("Signature: ", signature);
+            const signature = await this.liquidate(marginAccount, markets);
+            console.log("Signature: ", signature);
         }
     }
 
@@ -165,13 +159,7 @@ export class Liquidator {
                 )
                 .feePayer(this.liquidatorSigner.publicKey)
                 .buildSigned([this.liquidatorSigner], recentBlockhash);
-
-            return await sendSignedTransaction({
-                signedTransaction: tx,
-                connection: this.connection,
-            });    
-
-            // return await sendAndConfirmTransaction(this.connection, tx, [this.liquidatorSigner]);
+            return await sendAndConfirmTransaction(this.connection, tx, [this.liquidatorSigner]);
         } catch (error) {
             // we throw here but all errors are catched in runLiquidate()
             throw new Error(`Error while during liquidation for margin account: ${marginAccountWrapper.address}, error,: ${error}`);
